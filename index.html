@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="pl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Habit tracker</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#fff;--fg:#1f2328;--mu:#656d76;--bd:#d0d7de;--c0:#ebedf0;--c1:#9be9a8;--c2:#40c463;--c3:#30a14e;--c4:#216e39;--ac:#216e39}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1117;--fg:#e6edf3;--mu:#8b949e;--bd:#30363d;--c0:#161b22;--c1:#0e4429;--c2:#006d32;--c3:#26a641;--c4:#39d353;--ac:#39d353}}
+:root[data-theme="dark"]{--bg:#0d1117;--fg:#e6edf3;--mu:#8b949e;--bd:#30363d;--c0:#161b22;--c1:#0e4429;--c2:#006d32;--c3:#26a641;--c4:#39d353;--ac:#39d353}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Arial,sans-serif;padding:16px;max-width:900px}
+h1{font-size:20px;margin:0 0 12px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+button,input,select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:6px 10px}
+button{cursor:pointer}button.on{background:var(--ac);color:var(--bg);border-color:var(--ac)}
+input[type=number]{width:90px}input[type=text]{width:140px}
+.box{border:1px solid var(--bd);border-radius:8px;padding:12px;margin-bottom:12px}
+.scroll{overflow-x:auto;padding-bottom:4px}
+.weeks{display:flex;gap:3px;width:max-content}
+.col{display:flex;flex-direction:column;gap:3px}
+.lab{height:14px;font-size:10px;color:var(--mu);white-space:nowrap;overflow:visible}
+.cell{width:13px;height:13px;border-radius:2px;background:var(--c0);cursor:pointer}
+.cell.f{visibility:hidden}.cell.s{outline:2px solid var(--fg)}
+.l1{background:var(--c1)}.l2{background:var(--c2)}.l3{background:var(--c3)}.l4{background:var(--c4)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.stat b{display:block;font-size:20px}.stat span{color:var(--mu);font-size:12px}
+.mu{color:var(--mu);font-size:12px}
+.legend{display:flex;gap:3px;align-items:center;font-size:11px;color:var(--mu);margin-top:6px}
+svg{width:100%;max-width:520px;height:auto}
+</style></head><body>
+<h1>Habit tracker</h1>
+<div class="row" id="tabs"></div>
+<div class="box"><div class="scroll" id="sc"><div class="weeks" id="hm"></div></div>
+<div class="legend">mniej <span class="cell"></span><span class="cell l1"></span><span class="cell l2"></span><span class="cell l3"></span><span class="cell l4"></span> więcej
+<span style="margin-left:8px">kolor = % dziennego celu (przy treningu: odhaczona sesja)</span></div></div>
+<div class="box" id="entry"></div>
+<div class="box"><div class="stats" id="stats"></div></div>
+<div class="box"><b>Ostatnie 12 tygodni</b> <span class="mu" id="cu"></span><div id="chart"></div></div>
+<div class="box"><b>Nowy nawyk</b>
+<div class="row" style="margin:8px 0 0"><input type="text" id="nn" placeholder="Nazwa">
+<select id="nm"><option value="min">czas (minuty)</option><option value="ses">sesje (odhaczanie)</option></select>
+<input type="number" id="ng" placeholder="cel min/dzień" min="1">
+<button id="add">Dodaj</button></div></div>
+<div class="row"><button id="ex">Eksportuj dane</button><button id="im">Importuj dane</button>
+<input type="file" id="fi" accept="application/json" hidden></div>
+<div class="mu">Dane są zapisane tylko w tej przeglądarce. Co jakiś czas zrób eksport (kopia zapasowa).</div>
+<div class="mu" id="note"></div>
+<script>
+const $=s=>document.querySelector(s);
+let S={habits:[],logs:{}},cur=null,sel=null,ref=null,delArm=false;
+const pad=n=>String(n).padStart(2,'0');
+const key=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const addD=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x};
+const today=()=>{const d=new Date();d.setHours(12,0,0,0);return d};
+const H=()=>S.habits.find(h=>h.id===cur);
+const val=(h,k)=>(S.logs[h.id]&&S.logs[h.id][k])||0;
+const pct=(h,v)=>v<=0?0:(h.mode==='min'&&h.goal>0?v/h.goal*100:100);
+const lvl=p=>p<=0?0:p<50?1:p<100?2:p<150?3:4;
+function save(){
+  try{localStorage.setItem('ht',JSON.stringify(S))}
+  catch(e){$('#note').textContent='Nie udało się zapisać danych w tej przeglądarce. Użyj Eksportuj.'}
+}
+async function init(){
+  const th=new URLSearchParams(location.search).get('theme');
+  if(th==='light'||th==='dark')document.documentElement.dataset.theme=th;
+  try{const t=localStorage.getItem('ht');if(t)S=JSON.parse(t)}
+  catch(e){$('#note').textContent='Ta przeglądarka blokuje zapis. Używaj Eksportuj/Importuj, żeby nie stracić danych.'}
+  S.habits=S.habits||[];S.logs=S.logs||{};
+  if(!S.habits.length){S.habits=[{id:'h1',name:'Nauka',mode:'min',goal:60},{id:'h2',name:'Trening',mode:'ses',goal:0}];save()}
+  cur=S.habits[0].id;sel=key(today());render();
+}
+function render(){
+  const h=H();if(!h)return;
+  $('#tabs').innerHTML=S.habits.map(x=>`<button class="${x.id===cur?'on':''}" data-h="${x.id}">${esc(x.name)}</button>`).join('');
+  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{cur=b.dataset.h;delArm=false;render()});
+  // heatmap
+  const t=today(),dow=(t.getDay()+6)%7,start=addD(t,-dow-52*7);let out='';
+  for(let w=0;w<53;w++){
+    const f=addD(start,w*7);const prev=addD(f,-7);
+    const lab=(f.getDate()<=7&&(w>0||true))?f.toLocaleDateString('pl',{month:'short'}):'';
+    out+=`<div class="col"><div class="lab">${lab}</div>`;
+    for(let d=0;d<7;d++){const day=addD(f,d),k=key(day),fut=day>t;
+      const l=lvl(pct(h,val(h,k)));
+      out+=`<div class="cell ${fut?'f':''} ${l?'l'+l:''} ${k===sel?'s':''}" data-d="${k}" title="${k}"></div>`}
+    out+='</div>';
+  }
+  $('#hm').innerHTML=out;
+  $('#hm').querySelectorAll('.cell').forEach(c=>c.onclick=()=>{sel=c.dataset.d;render()});
+  $('#sc').scrollLeft=$('#sc').scrollWidth;
+  entry(h);stats(h);
+}
+function entry(h){
+  const v=val(h,sel);let s=`<b>${sel}</b> <span class="mu">${esc(h.name)}${h.mode==='min'?' · cel '+h.goal+' min':''}</span><div class="row" style="margin:8px 0 0">`;
+  if(h.mode==='min')s+=`<input type="number" id="v" min="0" value="${v||''}" placeholder="minuty"><button id="sv">Zapisz</button>`;
+  else s+=`<button id="sv" class="${v?'on':''}">${v?'Odhaczone ✓':'Odhacz sesję'}</button>`;
+  s+=`<button id="cl">Wyczyść dzień</button><button id="dl">${delArm?'Na pewno usunąć?':'Usuń nawyk'}</button></div>`;
+  $('#entry').innerHTML=s;
+  const set=n=>{S.logs[h.id]=S.logs[h.id]||{};if(n>0)S.logs[h.id][sel]=n;else delete S.logs[h.id][sel];save();delArm=false;render()};
+  $('#sv').onclick=()=>h.mode==='min'?set(Math.max(0,Math.round(+$('#v').value||0))):set(val(h,sel)?0:1);
+  $('#cl').onclick=()=>set(0);
+  $('#dl').onclick=()=>{if(!delArm){delArm=true;entry(h);return}
+    S.habits=S.habits.filter(x=>x.id!==h.id);delete S.logs[h.id];save();
+    if(!S.habits.length)S.habits=[{id:'h'+Date.now(),name:'Nawyk',mode:'ses',goal:0}];cur=S.habits[0].id;delArm=false;render()};
+}
+function sumRange(h,a,b){let s=0;for(let d=a;d<=b;d=addD(d,1))s+=h.mode==='min'?val(h,key(d)):(val(h,key(d))?1:0);return s}
+function stats(h){
+  const t=today(),L=h.logs;let tot=0;const lg=S.logs[h.id]||{};
+  for(const k in lg)tot+=h.mode==='min'?lg[k]:(lg[k]?1:0);
+  let st=0,d=val(h,key(t))>0?t:addD(t,-1);while(val(h,key(d))>0){st++;d=addD(d,-1)}
+  const a=sumRange(h,addD(t,-6),t),b=sumRange(h,addD(t,-13),addD(t,-7));
+  const imp=b>0?Math.round((a-b)/b*100):null;
+  const u=h.mode==='min'?' min':' sesji';
+  const tt=h.mode==='min'?(Math.round(tot/60*10)/10)+' h':tot;
+  $('#stats').innerHTML=`<div class="stat"><b>${tt}</b><span>łącznie${h.mode==='min'?' (czas)':' (sesje)'}</span></div>
+  <div class="stat"><b>${st} dni</b><span>obecna seria</span></div>
+  <div class="stat"><b>${a}${u}</b><span>ostatnie 7 dni</span></div>
+  <div class="stat"><b>${imp===null?'—':(imp>0?'+':'')+imp+'%'}</b><span>vs poprzednie 7 dni</span></div>`;
+  // weekly bars
+  const dow=(t.getDay()+6)%7,mon=addD(t,-dow),ws=[];
+  for(let i=11;i>=0;i--){const s=addD(mon,-i*7);ws.push(sumRange(h,s,addD(s,6)))}
+  const mx=Math.max(1,...ws);let g='';
+  ws.forEach((v,i)=>{const bh=Math.round(v/mx*70);g+=`<rect x="${i*30+4}" y="${90-bh}" width="22" height="${bh}" rx="2" fill="var(--ac)"/><text x="${i*30+15}" y="${86-bh}" font-size="9" text-anchor="middle" fill="var(--mu)">${v||''}</text>`});
+  $('#chart').innerHTML=`<svg viewBox="0 0 364 100" role="img" aria-label="Tygodniowa suma">${g}</svg>`;
+  $('#cu').textContent='('+(h.mode==='min'?'minuty':'sesje')+' na tydzień, ostatni słupek = bieżący tydzień)';
+}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+$('#add').onclick=()=>{const n=$('#nn').value.trim();if(!n)return;
+  const m=$('#nm').value,g=Math.max(0,Math.round(+$('#ng').value||0));
+  const id='h'+Date.now();S.habits.push({id,name:n,mode:m,goal:m==='min'?(g||30):0});cur=id;save();$('#nn').value='';$('#ng').value='';render()};
+$('#nm').onchange=()=>{$('#ng').style.display=$('#nm').value==='min'?'':'none'};
+$('#ex').onclick=()=>{const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(S)],{type:'application/json'}));
+  a.download='habit-tracker-'+key(today())+'.json';a.click()};
+$('#im').onclick=()=>$('#fi').click();
+$('#fi').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();
+  r.onload=()=>{try{const d=JSON.parse(r.result);if(!Array.isArray(d.habits)||!d.habits.length)throw 0;
+    S={habits:d.habits,logs:d.logs||{}};cur=S.habits[0].id;save();render()}catch(x){$('#note').textContent='Nieprawidłowy plik.'}};r.readAsText(f)};
+init();
+</script></body></html>
